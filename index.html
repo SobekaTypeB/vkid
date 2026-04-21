@@ -58,7 +58,48 @@
         <h2>Логи / Ответ сервера</h2>
         <pre id="logOutput">Ожидание действий...</pre>
     </div>
+<div>
+  <script nonce="csp_nonce" src="https://unpkg.com/@vkid/sdk@<3.0.0/dist-sdk/umd/index.js"></script>
+  <script nonce="csp_nonce" type="text/javascript">
+    if ('VKIDSDK' in window) {
+      const VKID = window.VKIDSDK;
 
+      VKID.Config.init({
+        app: 54556899,
+        redirectUrl: 'https://sobekatypeb.github.io/vkid/',
+        responseMode: VKID.ConfigResponseMode.Callback,
+        source: VKID.ConfigSource.LOWCODE,
+        scope: '', // Заполните нужными доступами по необходимости
+      });
+
+      const oAuth = new VKID.OAuthList();
+
+      oAuth.render({
+        container: document.currentScript.parentElement,
+        oauthList: [
+          'vkid'
+        ]
+      })
+      .on(VKID.WidgetEvents.ERROR, vkidOnError)
+      .on(VKID.OAuthListInternalEvents.LOGIN_SUCCESS, function (payload) {
+        const code = payload.code;
+        const deviceId = payload.device_id;
+
+        VKID.Auth.exchangeCode(code, deviceId)
+          .then(vkidOnSuccess)
+          .catch(vkidOnError);
+      });
+    
+      function vkidOnSuccess(data) {
+        // Обработка полученного результата
+      }
+    
+      function vkidOnError(error) {
+        // Обработка ошибки
+      }
+    }
+  </script>
+</div>
  <script>
         function log(message, data = null) {
             const out = document.getElementById('logOutput');
