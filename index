@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSO Widgets (Без редиректов)</title>
+    <!-- Официальный скрипт Yandex ID SDK -->
+    <script src="https://yastatic.net/s3/passport-sdk/autofill/v1/sdk-suggest-with-polyfills-latest.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; max-width: 800px; margin: auto; background-color: #f4f4f9; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        h1, h2 { color: #2c3e50; }
+        label { display: block; margin-top: 10px; font-weight: bold; font-size: 14px; color: #555;}
+        input[type="text"] { width: 100%; padding: 8px; margin-top: 5px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        .button-row { display: flex; gap: 15px; margin-top: 20px; align-items: center; }
+        /* Контейнер для кнопки Яндекса */
+        #yandex-button-container { height: 44px; } 
+        /* Кастомная кнопка ВК */
+        .btn-vk { height: 44px; background-color: #0077ff; color: white; border: none; border-radius: 4px; padding: 0 20px; font-weight: bold; cursor: pointer; font-size: 14px;}
+        .btn-vk:hover { background-color: #005ce6; }
+        pre { background: #282c34; color: #61afef; padding: 15px; border-radius: 5px; overflow-x: auto; white-space: pre-wrap; font-size: 13px; }
+    </style>
+</head>
+<body>
+
+    <h1>Вход через виджеты (JS SDK)</h1>
+    <p>Здесь страница не перезагружается. Виджеты сами получают токен во всплывающем окне и отправляют POST-запрос на ваш бэкенд.</p>
+
+    <!-- Блок настроек -->
+    <div class="card">
+        <h2>1. Настройки API и Приложений</h2>
+        <label>URL вашего Бэкенда (API):</label>
+        <input type="text" id="apiUrl" value="https://localhost:5001/api">
+
+        <label>Yandex Client ID:</label>
+        <input type="text" id="yandexAppId" value="ВАШ_ЯНДЕКС_CLIENT_ID">
+
+        <label>VK App ID:</label>
+        <input type="text" id="vkAppId" value="ВАШ_VK_APP_ID">
+
+        <button onclick="initWidgets()" style="margin-top:15px; padding: 8px 15px; cursor:pointer;">Применить ID и загрузить виджеты</button>
+    </div>
+
+    <!-- Блок с самими кнопками -->
+    <div class="card">
+        <h2>2. Авторизация</h2>
+        <div class="button-row">
+            <!-- Сюда Яндекс сам отрисует свою фирменную кнопку -->
+            <div id="yandex-button-container"></div>
+            
+            <!-- Кнопка ВК -->
+            <button class="btn-vk" onclick="loginVkPopup()">Войти через ВКонтакте</button>
+        </div>
+    </div>
+
+    <!-- Блок логов -->
+    <div class="card">
+        <h2>Логи / Ответ сервера</h2>
+        <pre id="logOutput">Ожидание действий...</pre>
+    </div>
+
+ <script>
+        function log(message, data = null) {
+            const out = document.getElementById('logOutput');
+            const time = new Date().toLocaleTimeString();
+            let text = `[${time}] ${message}\n`;
+            if (data) text += JSON.stringify(data, null, 2) + "\n";
+            out.textContent = text + "\n---\n" + out.textContent;
+        }
+
+        // =========================================================================
+        // ПРОВЕРКА: Если эта страница открылась ВНУТРИ ПОПАПА Яндекса
+        // =========================================================================
+        if (window.location.hash.includes('access_token=')) {
+            const hashParams = new URLSearchParams(window.location.hash.substring(1));
+            const token = hashParams.get('access_token');
+            
+            if (token && window.opener) {
+                // Отправляем токен обратно в ГЛАВНОЕ ОКНО
+                window.opener.postMessage({ type: 'YANDEX_TOKEN', token: token }, window.location.origin);
+                // Закрываем попап! Он больше не нужен.
+                window.close();
+            }
+        }
+
+        // Слушаем в ГЛАВНОМ ОКНЕ сообщение от попапа
+        window.addEventListener('message', (event) => {
+            if (event.origin !== window.location.origin) return;
+            
+            if (event.data && event.data.type === 'YANDEX_TOKEN') {
+                log('🎯 Яндекс успешно вернул токен во всплывающем окне!');
+                // Отправляем токен на наш C# Бэкенд!
+                sendTokenToBackend('yandex', event.data.token);
+            }
+        });
+
+        // Генерация и получение ClientID устройства (имитация)
+        function getDeviceContext() {
+            let cid = localStorage.getItem("test_client_id");
+            if (!cid) {
+                cid = crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).substr(2, 9);
+                localStorage.setItem("test_client_id", cid);
+            }
+            return {
+                ClientID: cid,
+                ClientName: "Test Web Browser",
+                ActionID: 3 // WebAccountVerification
+            };
+        }
+
+        // ==========================================
+        // ГЛАВНАЯ ФУНКЦИЯ: ОТПРАВКА ТОКЕНА НА БЭКЕНД
+        // ==========================================
+        async function sendTokenToBackend(provider, accessToken) {
+            const apiUrl = document.getElementById('apiUrl').value;
+            const payload = getDeviceContext();
+            payload.AccessToken = accessToken; // Токен Яндекса
+
+            log(`Отправляем POST запрос на бэкенд (${apiUrl}/accounts/sso/${provider})...`, payload);
+
+            try {
+                const response = await fetch(`${apiUrl}/accounts/sso/${provider}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    log(`✅ УСПЕХ! Мы авторизованы на бэкенде. JWT получен:`, data);
+                } else {
+                    log(`❌ ОШИБКА БЭКЕНДА:`, data);
+                }
+            } catch (error) {
+                log(`❌ ОШИБКА СЕТИ (Проверьте CORS и запущен ли бэкенд):`, error.message);
+            }
+        }
+
+        // ==========================================
+        // ИНИЦИАЛИЗАЦИЯ ВИДЖЕТА ЯНДЕКСА
+        // ==========================================
+        function initWidgets() {
+    const yaAppId = document.getElementById('yandexAppId').value;
+    const container = document.getElementById('yandex-button-container');
+    container.innerHTML = ''; 
+
+    if (!yaAppId || yaAppId.includes('ВАШ_')) {
+        log("⚠️ Введите реальный Yandex Client ID.");
+        return;
+    }
+
+    log("Инициализация виджета Яндекса на домене: " + window.location.origin);
+    
+    window.YaAuthSuggest.init(
+        {
+            client_id: yaAppId,
+            response_type: 'token',
+            // Динамически берем текущий адрес (хоть localhost, хоть ngrok)
+            redirect_uri: window.location.href.split('#')[0] 
+        },
+        window.location.origin, // Автоматически подставит https://xxxx.ngrok-free.app
+        {
+            view: 'button',
+            parentId: 'yandex-button-container',
+            buttonSize: 'm',
+            buttonView: 'main',
+            buttonTheme: 'light',
+            buttonBorderRadius: '4',
+            buttonType: 'button'
+        }
+    )
+    .then(({ handler }) => handler())
+    .then(data => {
+        log('🎯 Яндекс вернул токен:', data);
+        sendTokenToBackend('yandex', data.access_token);
+    })
+    .catch(error => {
+        log('❌ Ошибка виджета (проверьте консоль F12):', error);
+        console.error(error); // Посмотрите сюда, если кнопка пропала
+    });
+}
+        // ==========================================
+        // АВТОРИЗАЦИЯ ВК (Всплывающее окно)
+        // ==========================================
+        function loginVkPopup() {
+            const vkAppId = document.getElementById('vkAppId').value;
+            if (!vkAppId || vkAppId.includes('ВАШ_')) {
+                alert("Введите реальный VK App ID");
+                return;
+            }
+
+            const redirectUri = window.location.origin + window.location.pathname; 
+            const vkAuthUrl = `https://oauth.vk.com/authorize?client_id=${vkAppId}&display=popup&redirect_uri=${encodeURIComponent(redirectUri)}&scope=email&response_type=token&v=5.199`;
+
+            log("Открываем окно ВК...");
+            
+            const width = 600, height = 600;
+            const left = (window.innerWidth / 2) - (width / 2);
+            const top = (window.innerHeight / 2) - (height / 2);
+            const vkWindow = window.open(vkAuthUrl, 'vk_auth', `width=${width},height=${height},top=${top},left=${left}`);
+
+            const timer = setInterval(() => {
+                if (vkWindow.closed) {
+                    clearInterval(timer);
+                    log("Окно ВК закрыто.");
+                    return;
+                }
+                try {
+                    const url = vkWindow.location.href;
+                    if (url.includes('#access_token=')) {
+                        clearInterval(timer);
+                        
+                        const hashParams = new URLSearchParams(vkWindow.location.hash.substring(1));
+                        const accessToken = hashParams.get('access_token');
+                        
+                        log('🎯 ВК успешно вернул токен во всплывающем окне!');
+                        vkWindow.close(); 
+
+                        sendTokenToBackend('vk', accessToken);
+                    }
+                } catch (e) {
+                }
+            }, 500);
+        }
+    </script>
+</body>
+</html>
